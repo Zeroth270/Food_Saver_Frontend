@@ -7,7 +7,7 @@ const Button = ({ children, variant = 'primary', size = 'md', className = '', ..
         primary: 'bg-primary text-white border-transparent shadow-md hover:bg-primary-dark',
         secondary: 'bg-secondary text-text-main border-transparent shadow-md hover:bg-secondary-dark',
         outline: 'bg-transparent border-primary text-primary hover:bg-primary/10',
-        ghost: 'bg-transparent border-transparent text-text-light hover:bg-gray-100',
+        ghost: 'bg-transparent border-transparent text-text-light hover:bg-border',
     };
 
     const sizes = {

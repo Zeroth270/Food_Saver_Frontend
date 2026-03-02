@@ -2,9 +2,11 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapPin, ArrowRight, ShieldCheck, Users, HeartHandshake } from 'lucide-react';
 import Button from '../components/Button';
+import { isLoggedIn } from '../utils/auth';
 
 const Home = () => {
     const navigate = useNavigate();
+    const loggedIn = isLoggedIn();
 
     return (
         <div>
@@ -38,14 +40,16 @@ const Home = () => {
                             <MapPin size={20} className="mr-2" />
                             Find Food Near Me
                         </Button>
-                        <Button
-                            variant="secondary"
-                            size="lg"
-                            onClick={() => navigate('/post-food')}
-                            className="px-8 text-lg"
-                        >
-                            Post Surplus Food
-                        </Button>
+                        {loggedIn && (
+                            <Button
+                                variant="secondary"
+                                size="lg"
+                                onClick={() => navigate('/post-food')}
+                                className="px-8 text-lg"
+                            >
+                                Post Surplus Food
+                            </Button>
+                        )}
                     </div>
                 </div>
             </section>

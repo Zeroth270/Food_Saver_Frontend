@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LogIn } from 'lucide-react';
 import Button from '../components/Button';
 import Input from '../components/Input';
+import API_BASE_URL from '../config';
 
 const Login = () => {
     const navigate = useNavigate();
@@ -10,17 +11,50 @@ const Login = () => {
         email: '',
         password: ''
     });
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.id]: e.target.value });
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        // Mock login logic
-        console.log('Login attempt:', formData);
-        alert('Logged in successfully! (Mock)');
-        navigate('/');
+        setLoading(true);
+        setError('');
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/user/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: formData.email,
+                    password: formData.password,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Login failed. Please check your credentials.');
+            }
+
+            // Store token / user info returned by your API
+            if (data.token) {
+                localStorage.setItem('token', data.token);
+            }
+
+            // Store user data — API may return user nested or as the root object
+            const userData = data.user || data;
+            localStorage.setItem('user', JSON.stringify(userData));
+            localStorage.setItem('loggedIn', 'true');
+
+            navigate('/');
+        } catch (err) {
+            setError(err.message || 'Something went wrong. Please try again.');
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -58,8 +92,14 @@ const Login = () => {
                         <Link to="#" className="text-sm text-primary hover:underline">Forgot Password?</Link>
                     </div>
 
-                    <Button variant="primary" size="lg" className="w-full mb-4">
-                        Sign In
+                    {error && (
+                        <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+                            {error}
+                        </div>
+                    )}
+
+                    <Button variant="primary" size="lg" className="w-full mb-4" disabled={loading}>
+                        {loading ? 'Logging in…' : 'LogIn'}
                     </Button>
                 </form>
 

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-@theme {
+/* ===== Light mode (default) ===== */
+:root {
     --color-primary: #4CAF50;
     --color-primary-dark: #388E3C;
     --color-primary-light: #C8E6C9;
@@ -20,12 +21,65 @@
     --color-danger: #E57373;
     --color-success: #81C784;
 
+    --color-nav-bg: rgba(255, 255, 255, 0.95);
+    --color-card-hover-bg: rgba(0, 0, 0, 0.02);
+}
+
+/* ===== Dark mode ===== */
+.dark {
+    --color-primary: #66BB6A;
+    --color-primary-dark: #81C784;
+    --color-primary-light: #1B3A1D;
+
+    --color-secondary: #FFD54F;
+    --color-secondary-dark: #FFCA28;
+    --color-secondary-light: #3E3213;
+
+    --color-background: #121212;
+    --color-surface: #1E1E1E;
+
+    --color-text-main: #E0E0E0;
+    --color-text-light: #AAAAAA;
+    --color-text-muted: #777777;
+
+    --color-border: #333333;
+    --color-danger: #EF5350;
+    --color-success: #66BB6A;
+
+    --color-nav-bg: rgba(30, 30, 30, 0.95);
+    --color-card-hover-bg: rgba(255, 255, 255, 0.03);
+}
+
+@theme {
+    --color-primary: var(--color-primary);
+    --color-primary-dark: var(--color-primary-dark);
+    --color-primary-light: var(--color-primary-light);
+
+    --color-secondary: var(--color-secondary);
+    --color-secondary-dark: var(--color-secondary-dark);
+    --color-secondary-light: var(--color-secondary-light);
+
+    --color-background: var(--color-background);
+    --color-surface: var(--color-surface);
+
+    --color-text-main: var(--color-text-main);
+    --color-text-light: var(--color-text-light);
+    --color-text-muted: var(--color-text-muted);
+
+    --color-border: var(--color-border);
+    --color-danger: var(--color-danger);
+    --color-success: var(--color-success);
+
+    --color-nav-bg: var(--color-nav-bg);
+    --color-card-hover-bg: var(--color-card-hover-bg);
+
     --font-sans: 'Inter', system-ui, sans-serif;
 }
 
 @layer base {
     body {
         @apply bg-background text-text-main font-sans antialiased;
+        transition: background-color 0.3s ease, color 0.3s ease;
     }
 
     h1,
