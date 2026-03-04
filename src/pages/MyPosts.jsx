@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Clock, Pencil, Trash2, X, Save, Leaf, AlertCircle } from 'lucide-react';
+import { MapPin, Clock, Pencil, Trash2, X, Save, Leaf, AlertCircle, Users, Check, XCircle } from 'lucide-react';
 import Button from '../components/Button';
 import Input from '../components/Input';
 import API_BASE_URL from '../config';
@@ -18,6 +18,11 @@ const MyPosts = () => {
     const [editData, setEditData] = useState({});
     const [actionLoading, setActionLoading] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+    // Requests State
+    const [viewingRequestsId, setViewingRequestsId] = useState(null);
+    const [postRequests, setPostRequests] = useState([]);
+    const [requestsLoading, setRequestsLoading] = useState(false);
 
     // Fetch all posts by this user
     const fetchPosts = async () => {
@@ -112,11 +117,56 @@ const MyPosts = () => {
         }
     };
 
+    // Fetch requests for a post
+    const handleViewRequests = async (foodId) => {
+        if (viewingRequestsId === foodId) {
+            setViewingRequestsId(null);
+            return;
+        }
+        setViewingRequestsId(foodId);
+        setRequestsLoading(true);
+        try {
+            const response = await fetch(`${API_BASE_URL}/contact/food/${foodId}`);
+            if (!response.ok) throw new Error('Failed to fetch requests');
+            const data = await response.json();
+            setPostRequests(data);
+        } catch (err) {
+            console.error('Error fetching requests:', err);
+            setPostRequests([]);
+        } finally {
+            setRequestsLoading(false);
+        }
+    };
+
+    const handleUpdateRequestStatus = async (requestId, action) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/contact/${action}/${requestId}`, {
+                method: 'PUT'
+            });
+            if (!response.ok) throw new Error(`Failed to ${action} request`);
+
+            // Refresh requests for this post
+            const data = await response.json();
+            setPostRequests(prev => prev.map(req => req.contactId === requestId ? data : req));
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
     const getStatusColor = (status) => {
         switch (status) {
             case 'AVAILABLE': return 'bg-green-100 text-green-700';
             case 'CLAIMED': return 'bg-yellow-100 text-yellow-700';
             case 'EXPIRED': return 'bg-red-100 text-red-700';
+            default: return 'bg-border text-text-muted';
+        }
+    };
+
+    const getRequestStatusColor = (status) => {
+        switch (status) {
+            case 'PENDING': return 'bg-yellow-100 text-yellow-700';
+            case 'ACCEPT': return 'bg-green-100 text-green-700';
+            case 'REJECT': return 'bg-red-100 text-red-700';
             default: return 'bg-border text-text-muted';
         }
     };
@@ -265,28 +315,107 @@ const MyPosts = () => {
                                                 <p className="text-xs text-text-muted mt-2">Posted: {formatDate(post.createdAt)}</p>
                                             )}
                                         </div>
-                                        <div className="flex gap-2 shrink-0">
-                                            <Button variant="outline" size="sm" onClick={() => handleEdit(post)}>
-                                                <Pencil size={14} className="mr-1" /> Edit
-                                            </Button>
-                                            {deleteConfirm === post.foodId ? (
-                                                <div className="flex gap-2">
-                                                    <Button variant="primary" size="sm" className="!bg-red-500 hover:!bg-red-600 !border-red-500"
-                                                        onClick={() => handleDelete(post.foodId)} disabled={actionLoading}>
-                                                        {actionLoading ? '…' : 'Confirm'}
-                                                    </Button>
-                                                    <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>
-                                                        Cancel
-                                                    </Button>
-                                                </div>
-                                            ) : (
-                                                <Button variant="outline" size="sm" className="!text-red-500 !border-red-300 hover:!bg-red-50"
-                                                    onClick={() => setDeleteConfirm(post.foodId)}>
-                                                    <Trash2 size={14} className="mr-1" /> Delete
+                                        <div className="flex flex-col gap-2 shrink-0">
+                                            <div className="flex gap-2">
+                                                <Button variant="primary" size="sm" onClick={() => handleViewRequests(post.foodId)} className="flex-1">
+                                                    <Users size={14} className="mr-1" />
+                                                    {viewingRequestsId === post.foodId ? 'Hide Requests' : 'Requests'}
                                                 </Button>
-                                            )}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => handleEdit(post)}>
+                                                    <Pencil size={14} className="mr-1" /> Edit
+                                                </Button>
+                                                {deleteConfirm === post.foodId ? (
+                                                    <div className="flex gap-2">
+                                                        <Button variant="primary" size="sm" className="!bg-red-500 hover:!bg-red-600 !border-red-500"
+                                                            onClick={() => handleDelete(post.foodId)} disabled={actionLoading}>
+                                                            {actionLoading ? '…' : 'Confirm'}
+                                                        </Button>
+                                                        <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>
+                                                            Cancel
+                                                        </Button>
+                                                    </div>
+                                                ) : (
+                                                    <Button variant="outline" size="sm" className="!text-red-500 !border-red-300 hover:!bg-red-50"
+                                                        onClick={() => setDeleteConfirm(post.foodId)}>
+                                                        <Trash2 size={14} className="mr-1" /> Delete
+                                                    </Button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
+
+                                    {/* Requests Dropdown */}
+                                    {viewingRequestsId === post.foodId && (
+                                        <div className="mt-6 border-t border-border pt-4">
+                                            <h4 className="font-semibold text-text-main mb-3 flex items-center gap-2">
+                                                <Users size={16} className="text-primary" />
+                                                Food Requests
+                                            </h4>
+
+                                            {requestsLoading ? (
+                                                <p className="text-sm text-text-muted">Loading requests...</p>
+                                            ) : postRequests.length === 0 ? (
+                                                <p className="text-sm text-text-muted bg-background p-4 rounded-lg border border-border">
+                                                    No one has requested this food item yet.
+                                                </p>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    {postRequests.map(req => (
+                                                        <div key={req.contactId} className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center bg-background p-4 rounded-xl border border-border">
+                                                            <div>
+                                                                <div className="flex items-center gap-2 mb-1">
+                                                                    <p className="font-semibold text-sm text-text-main">{req.receiver?.name || 'Unknown User'}</p>
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${getRequestStatusColor(req.status)}`}>
+                                                                        {req.status}
+                                                                    </span>
+                                                                </div>
+                                                                {req.message && (
+                                                                    <p className="text-sm text-text-light mb-1">"{req.message}"</p>
+                                                                )}
+                                                                <p className="text-xs text-text-muted">Requested on {formatDate(req.createdAt)}</p>
+                                                            </div>
+                                                            <div className="flex gap-2 mt-2 sm:mt-0">
+                                                                {req.status === 'PENDING' && (
+                                                                    <>
+                                                                        <Button
+                                                                            variant="primary"
+                                                                            size="sm"
+                                                                            className="!bg-green-600 hover:!bg-green-700 !border-green-600 !py-1"
+                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'accept')}
+                                                                        >
+                                                                            <Check size={14} className="mr-1" /> Accept
+                                                                        </Button>
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            className="!text-red-600 !border-red-200 hover:!bg-red-50 !py-1"
+                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'reject')}
+                                                                        >
+                                                                            <XCircle size={14} className="mr-1" /> Reject
+                                                                        </Button>
+                                                                    </>
+                                                                )}
+                                                                {req.status !== 'PENDING' && (
+                                                                    <Button
+                                                                        variant="outline"
+                                                                        size="sm"
+                                                                        className="!py-1"
+                                                                        onClick={() => {
+                                                                            navigate(`/messages?name=${encodeURIComponent(req.receiver?.name || '')}&email=${encodeURIComponent(req.receiver?.email || '')}&foodTitle=${encodeURIComponent(post.title || '')}&foodId=${encodeURIComponent(post.foodId || '')}`);
+                                                                        }}
+                                                                    >
+                                                                        Message User
+                                                                    </Button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

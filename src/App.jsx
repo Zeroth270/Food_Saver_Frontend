@@ -12,6 +12,7 @@ import MyPosts from './pages/MyPosts';
 import Messages from './pages/Messages';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { Toaster } from 'react-hot-toast';
 import './styles/global.css';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
       <WebSocketProvider>
         <NotificationProvider>
           <div className="App min-h-screen flex flex-col font-sans bg-background text-text-main">
+            <Toaster />
             <Navbar />
             <main className="flex-grow">
               <Routes>

@@ -11,7 +11,8 @@ export const useWebSocket = () => useContext(WebSocketContext);
 export const WebSocketProvider = ({ children }) => {
     const [connected, setConnected] = useState(false);
     const clientRef = useRef(null);
-    const subscriptionsRef = useRef(new Map()); // destination -> { callback, stompSub }
+    const subscriptionsRef = useRef(new Map()); // uniqueKey -> { destination, callback, stompSub }
+    const subIdCounter = useRef(0);
 
     useEffect(() => {
         if (!isLoggedIn()) return;
@@ -29,8 +30,8 @@ export const WebSocketProvider = ({ children }) => {
                 console.log('[WS] Connected');
 
                 // Re-subscribe all registered subscribers on reconnect
-                subscriptionsRef.current.forEach((entry, destination) => {
-                    const stompSub = client.subscribe(destination, (msg) => {
+                subscriptionsRef.current.forEach((entry, key) => {
+                    const stompSub = client.subscribe(entry.destination, (msg) => {
                         try {
                             entry.callback(JSON.parse(msg.body));
                         } catch {
@@ -63,14 +64,11 @@ export const WebSocketProvider = ({ children }) => {
     }, []);
 
     const subscribe = useCallback((destination, callback) => {
-        // Unsubscribe old subscription to this destination first
-        const existing = subscriptionsRef.current.get(destination);
-        if (existing?.stompSub) {
-            try { existing.stompSub.unsubscribe(); } catch { /* ignore */ }
-        }
+        // Generate a unique key so multiple subscribers to the same destination coexist
+        const subKey = `${destination}__${++subIdCounter.current}`;
 
-        const entry = { callback, stompSub: null };
-        subscriptionsRef.current.set(destination, entry);
+        const entry = { destination, callback, stompSub: null };
+        subscriptionsRef.current.set(subKey, entry);
 
         if (clientRef.current?.connected) {
             entry.stompSub = clientRef.current.subscribe(destination, (msg) => {
@@ -87,7 +85,7 @@ export const WebSocketProvider = ({ children }) => {
             if (entry.stompSub) {
                 try { entry.stompSub.unsubscribe(); } catch { /* ignore */ }
             }
-            subscriptionsRef.current.delete(destination);
+            subscriptionsRef.current.delete(subKey);
         };
     }, []);
 

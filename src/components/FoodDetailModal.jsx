@@ -1,20 +1,34 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { getUser } from '../utils/auth';
 import { useNavigate } from 'react-router-dom';
 import {
     X, MapPin, Clock, Package, Utensils, Leaf, Drumstick,
     Navigation, User, Phone, Mail, MessageCircle, IndianRupee,
-    Calendar, Info, Send
+    Calendar, Info, Send, CheckCircle2, AlertCircle, Loader2
 } from 'lucide-react';
 import Button from './Button';
+import API_BASE_URL from '../config';
 
 const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
     const navigate = useNavigate();
+
+    // Request State
+    const [showRequestForm, setShowRequestForm] = useState(false);
+    const [requestMessage, setRequestMessage] = useState('');
+    const [requestLoading, setRequestLoading] = useState(false);
+    const [requestSuccess, setRequestSuccess] = useState(false);
+    const [requestError, setRequestError] = useState('');
+
     if (!food) return null;
 
     const donor = food.user || {};
     const donorName = donor.name || food.postedBy || 'Anonymous';
     const donorEmail = donor.email || null;
     const donorPhone = donor.phone || donor.phoneNumber || null;
+
+    // Check if the current logged-in user is the donor
+    const currentUser = getUser();
+    const isDonor = currentUser?.email && donorEmail && currentUser.email === donorEmail;
 
     const typeColor = food.foodType === 'Veg'
         ? 'bg-green-100 text-green-700'
@@ -35,6 +49,49 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
         : 'bg-secondary-light text-secondary-dark';
 
     const imageUrl = food.image || null;
+
+    const handleSendRequest = async () => {
+        if (!currentUser) {
+            navigate('/login');
+            return;
+        }
+
+        const receiverId = currentUser.userId || currentUser.id;
+        if (!receiverId) {
+            setRequestError('User ID not found. Please log in again.');
+            return;
+        }
+
+        if (!food.foodId) {
+            setRequestError('Invalid food listing.');
+            return;
+        }
+
+        setRequestLoading(true);
+        setRequestError('');
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/contact/send/${food.foodId}/${receiverId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: requestMessage })
+            });
+
+            if (!response.ok) {
+                const errData = await response.text();
+                throw new Error(errData || 'Failed to send request');
+            }
+
+            setRequestSuccess(true);
+            setTimeout(() => {
+                onClose();
+            }, 2000);
+        } catch (err) {
+            setRequestError(err.message || 'An error occurred while sending the request.');
+        } finally {
+            setRequestLoading(false);
+        }
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -151,57 +208,127 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
                             </div>
                         </div>
 
-                        {/* Contact Actions */}
-                        <div className="flex flex-wrap gap-3">
-                            {/* In-App Message */}
-                            {donorEmail && (
-                                <button
+                        {/* Contact Actions — only shown to receivers, not to the donor */}
+                        {isDonor ? (
+                            <div className="flex items-center gap-2 text-sm text-primary p-3 bg-primary/5 rounded-lg border border-primary/20 w-full">
+                                <Info size={16} />
+                                <span>This is your listing. Contact options are shown to receivers only.</span>
+                            </div>
+                        ) : showRequestForm ? (
+                            <div className="bg-background border border-border rounded-xl p-4 animate-in">
+                                {requestSuccess ? (
+                                    <div className="flex flex-col items-center justify-center py-4 text-green-600">
+                                        <CheckCircle2 size={48} className="mb-2" />
+                                        <p className="font-medium text-center">Request sent successfully!</p>
+                                        <p className="text-sm opacity-80 mt-1">The donor will review your request.</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <h4 className="font-semibold text-text-main mb-2 flex items-center gap-2">
+                                            <Utensils size={18} className="text-primary" />
+                                            Request this Food
+                                        </h4>
+                                        <p className="text-sm text-text-muted mb-4">
+                                            Send a request to the donor to claim this item. You can include an optional message here.
+                                        </p>
+                                        <textarea
+                                            value={requestMessage}
+                                            onChange={(e) => setRequestMessage(e.target.value)}
+                                            placeholder="E.g., I'd love to pick this up! When are you available?"
+                                            rows={3}
+                                            className="w-full resize-none rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all mb-3"
+                                        />
+
+                                        {requestError && (
+                                            <div className="flex items-start gap-2 text-sm text-red-500 mb-3 bg-red-50 p-2 rounded-lg border border-red-100">
+                                                <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                                <span>{requestError}</span>
+                                            </div>
+                                        )}
+
+                                        <div className="flex gap-2">
+                                            <Button
+                                                variant="primary"
+                                                className="flex-1"
+                                                onClick={handleSendRequest}
+                                                disabled={requestLoading}
+                                            >
+                                                {requestLoading ? (
+                                                    <><Loader2 size={16} className="animate-spin mr-2" /> Sending...</>
+                                                ) : (
+                                                    <><Send size={16} className="mr-2" /> Send Request</>
+                                                )}
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                onClick={() => {
+                                                    setShowRequestForm(false);
+                                                    setRequestError('');
+                                                }}
+                                                disabled={requestLoading}
+                                            >
+                                                Cancel
+                                            </Button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="flex flex-wrap gap-3">
+                                {/* Formal Request Button */}
+                                <Button
+                                    variant="primary"
                                     onClick={() => {
-                                        onClose();
-                                        navigate(`/messages?name=${encodeURIComponent(donorName)}&email=${encodeURIComponent(donorEmail)}`);
+                                        if (!currentUser) navigate('/login');
+                                        else setShowRequestForm(true);
                                     }}
-                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-dark transition-colors cursor-pointer"
+                                    className="!w-full sm:!w-auto"
                                 >
-                                    <Send size={16} />
-                                    Message Donor
-                                </button>
-                            )}
-                            {donorPhone && (
-                                <a
-                                    href={`tel:${donorPhone}`}
-                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline"
-                                >
-                                    <Phone size={16} />
-                                    Call
-                                </a>
-                            )}
-                            {donorPhone && (
-                                <a
-                                    href={`https://wa.me/${donorPhone.replace(/[^0-9]/g, '')}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors no-underline"
-                                >
-                                    <MessageCircle size={16} />
-                                    WhatsApp
-                                </a>
-                            )}
-                            {donorEmail && (
-                                <a
-                                    href={`mailto:${donorEmail}?subject=Regarding your food listing: ${food.title}`}
-                                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline"
-                                >
-                                    <Mail size={16} />
-                                    Email
-                                </a>
-                            )}
-                            {!donor.userId && !donorPhone && !donorEmail && (
-                                <div className="flex items-center gap-2 text-sm text-text-muted p-3 bg-background rounded-lg border border-border w-full">
-                                    <Info size={16} />
-                                    <span>Contact information is not available for this donor.</span>
-                                </div>
-                            )}
-                        </div>
+                                    <Utensils size={16} className="mr-2" />
+                                    Request Food
+                                </Button>
+
+                                {/* In-App Message */}
+                                {donorEmail && (
+                                    <button
+                                        onClick={() => {
+                                            onClose();
+                                            navigate(`/messages?name=${encodeURIComponent(donorName)}&email=${encodeURIComponent(donorEmail)}&foodTitle=${encodeURIComponent(food.title || '')}&foodId=${encodeURIComponent(food.foodId || '')}`);
+                                        }}
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors cursor-pointer w-full sm:w-auto"
+                                    >
+                                        <MessageCircle size={16} />
+                                        Chat
+                                    </button>
+                                )}
+                                {donorPhone && (
+                                    <a
+                                        href={`tel:${donorPhone}`}
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline w-full sm:w-auto"
+                                    >
+                                        <Phone size={16} />
+                                        Call
+                                    </a>
+                                )}
+                                {donorPhone && (
+                                    <a
+                                        href={`https://wa.me/${donorPhone.replace(/[^0-9]/g, '')}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors no-underline w-full sm:w-auto"
+                                    >
+                                        <MessageCircle size={16} />
+                                        WhatsApp
+                                    </a>
+                                )}
+                                {!donor.userId && !donorPhone && !donorEmail && (
+                                    <div className="flex items-center gap-2 text-sm text-text-muted p-3 bg-background rounded-lg border border-border w-full">
+                                        <Info size={16} />
+                                        <span>Contact information is not available for this donor.</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

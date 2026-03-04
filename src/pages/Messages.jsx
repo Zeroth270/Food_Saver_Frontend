@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     MessageCircle, Send, ArrowLeft, Search, User, Wifi,
-    WifiOff, Loader2, AlertCircle, Clock
+    WifiOff, Loader2, AlertCircle, Clock, Utensils
 } from 'lucide-react';
 import { useWebSocket } from '../context/WebSocketContext';
 import { getUser, isLoggedIn } from '../utils/auth';
@@ -39,77 +39,123 @@ const Messages = () => {
         scrollToBottom();
     }, [messages, scrollToBottom]);
 
-    // Load conversations from localStorage (persisted client-side)
+    // Fetch conversations from backend
+    const fetchConversations = useCallback(async () => {
+        if (!user?.email) return;
+        try {
+            const response = await fetch(`${API_BASE_URL}/chat/conversations?email=${encodeURIComponent(user.email)}`);
+            if (response.ok) {
+                const data = await response.json();
+
+                // The backend now returns List<ConversationDTO> instead of raw chats.
+                // Expected fields: partnerEmail, partnerName, lastMessage, lastTimestamp, foodTitle
+                const formattedConvs = data.map(conv => ({
+                    partnerEmail: conv.partnerEmail,
+                    partnerName: conv.partnerName || conv.partnerEmail || 'Unknown User',
+                    lastMessage: conv.lastMessage || '',
+                    timestamp: conv.lastTimestamp || conv.timestamp || new Date().toISOString(),
+                    foodTitle: conv.foodTitle || null,
+                })).filter(c => c.partnerEmail); // Filter out any completely null DTOs just in case
+
+                // Sort by newest first
+                formattedConvs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                setConversations(formattedConvs);
+                localStorage.setItem('chat_conversations', JSON.stringify(formattedConvs));
+            }
+        } catch (err) {
+            console.error('Error fetching conversations:', err);
+        } finally {
+            setLoadingConversations(false);
+        }
+    }, [user?.email]);
+
+    // Load conversations from localStorage immediately for fast UI, then fetch fresh ones
     useEffect(() => {
         try {
             const saved = localStorage.getItem('chat_conversations');
             if (saved) setConversations(JSON.parse(saved));
         } catch { /* ignore */ }
-        setLoadingConversations(false);
-    }, []);
 
-    // Persist conversations to localStorage
-    const saveConversations = useCallback((convs) => {
-        setConversations(convs);
-        localStorage.setItem('chat_conversations', JSON.stringify(convs));
-    }, []);
+        fetchConversations();
+    }, [fetchConversations]);
 
-    // Update or add conversation entry (keyed by partnerEmail)
-    const upsertConversation = useCallback((partnerEmail, partnerName, lastMessage) => {
+    // Persist optimistic conversation updates to UI and localStorage immediately 
+    // without waiting for the next backend poll
+    const upsertConversation = useCallback((partnerEmail, partnerName, lastMessage, foodTitle) => {
         setConversations(prev => {
-            const existing = prev.filter(c => c.partnerEmail !== partnerEmail);
+            const existingConv = prev.find(c => c.partnerEmail === partnerEmail);
+            const others = prev.filter(c => c.partnerEmail !== partnerEmail);
             const updated = [
-                { partnerEmail, partnerName, lastMessage, timestamp: new Date().toISOString() },
-                ...existing,
+                {
+                    partnerEmail,
+                    partnerName,
+                    lastMessage,
+                    timestamp: new Date().toISOString(),
+                    // Keep existing foodTitle if not provided in this call
+                    foodTitle: foodTitle || existingConv?.foodTitle || null,
+                },
+                ...others,
             ];
             localStorage.setItem('chat_conversations', JSON.stringify(updated));
             return updated;
         });
     }, []);
 
+    // Track whether we already auto-sent the intro for this food context
+    const introSentRef = useRef(new Set());
+
     // Handle URL params for opening a chat directly
     useEffect(() => {
         const receiverName = searchParams.get('name');
         const receiverEmail = searchParams.get('email');
+        const foodTitle = searchParams.get('foodTitle');
+        const foodId = searchParams.get('foodId');
         if (receiverEmail) {
             setActiveChat({
                 name: receiverName || 'User',
                 email: receiverEmail,
+                foodTitle: foodTitle || null,
+                foodId: foodId || null,
             });
             setShowMobileChat(true);
-        }
-    }, [searchParams]);
 
-    // Fetch chat history from backend when switching chats
-    const fetchMessages = useCallback(async (partnerEmail) => {
+            // Store food context in conversation if present
+            if (foodTitle) {
+                upsertConversation(receiverEmail, receiverName || 'User', `Interested in: ${foodTitle}`, foodTitle);
+            }
+        }
+    }, [searchParams, upsertConversation]);
+
+    // Fetch chat history from backend when switching chats (silent = no loading spinner)
+    const fetchMessages = useCallback(async (partnerEmail, silent = false) => {
         if (!user?.email || !partnerEmail) return;
-        setLoadingMessages(true);
-        setError('');
+        if (!silent) {
+            setLoadingMessages(true);
+            setError('');
+        }
         try {
             const response = await fetch(
                 `${API_BASE_URL}/chat/history?sender=${encodeURIComponent(user.email)}&receiver=${encodeURIComponent(partnerEmail)}`
             );
             if (response.ok) {
                 const data = await response.json();
-                console.log('=== CHAT DEBUG ===');
-                console.log('My email:', user.email);
-                console.log('Partner email:', partnerEmail);
-                console.log('Raw API data:', JSON.stringify(data, null, 2));
                 const sorted = (Array.isArray(data) ? data : []).sort(
                     (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
                 );
                 setMessages(sorted);
-            } else {
+            } else if (!silent) {
                 setMessages([]);
             }
         } catch (err) {
             console.error('Error fetching chat history:', err);
-            setMessages([]);
+            if (!silent) setMessages([]);
         } finally {
-            setLoadingMessages(false);
+            if (!silent) setLoadingMessages(false);
         }
     }, [user?.email]);
 
+    // Load messages when switching chats
     useEffect(() => {
         if (activeChat?.email) {
             fetchMessages(activeChat.email);
@@ -117,12 +163,44 @@ const Messages = () => {
         }
     }, [activeChat?.email, fetchMessages]);
 
+    // Poll for new messages every 5 seconds (REST fallback for WebSocket)
+    useEffect(() => {
+        if (!activeChat?.email) return;
+        const interval = setInterval(() => {
+            fetchMessages(activeChat.email, true); // silent fetch
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [activeChat?.email, fetchMessages]);
+
+    // Poll for new conversations every 10 seconds (so donor sees new chats appear)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchConversations();
+        }, 10000);
+        return () => clearInterval(interval);
+    }, [fetchConversations]);
+
+    // Auto-send intro message when receiver opens chat from a food post
+    // Removed because the "Request Food" button now handles the initial context through the Contact APIs.
+    // The chat now naturally follows after an Accept/Reject flow.
+    useEffect(() => {
+        if (!activeChat?.foodTitle || !activeChat?.email || !user?.email) return;
+        // Build a unique key so we only auto-send once per food + partner combo
+        const key = `${activeChat.email}__${activeChat.foodId || activeChat.foodTitle}`;
+        if (introSentRef.current.has(key)) return;
+        introSentRef.current.add(key);
+        // Intro auto-send intentionally commented out. Flow has shifted to Request System.
+    }, [activeChat?.foodTitle, activeChat?.foodId, activeChat?.email, activeChat?.name, connected, user?.email, wsSend, upsertConversation, fetchMessages]);
+
     // Subscribe to incoming messages via WebSocket
     useEffect(() => {
         if (!connected || !user?.email) return;
 
         const unsub = subscribe(`/user/${user.email}/queue/messages`, (incomingMsg) => {
             const msgSenderEmail = incomingMsg.senderEmail || '';
+
+            // Ignore messages sent by ourselves (backend broadcasts them back)
+            if (msgSenderEmail === user.email) return;
 
             // If from active chat partner, add to displayed messages
             if (activeChat?.email === msgSenderEmail) {
@@ -136,14 +214,9 @@ const Messages = () => {
         return () => { if (unsub) unsub(); };
     }, [connected, user?.email, activeChat?.email, subscribe, upsertConversation]);
 
-    // Send a message via WebSocket
-    const handleSend = () => {
+    // Send a message via WebSocket + REST API backup
+    const handleSend = async () => {
         if (!newMessage.trim() || !activeChat || sending) return;
-
-        if (!connected) {
-            setError('Not connected. Please wait for reconnection.');
-            return;
-        }
 
         const messagePayload = {
             senderEmail: user.email,
@@ -153,9 +226,6 @@ const Messages = () => {
 
         setSending(true);
 
-        // Send via WebSocket STOMP — destination: /app/send
-        wsSend('/app/send', messagePayload);
-
         // Optimistically add to local messages
         const optimisticMsg = {
             ...messagePayload,
@@ -163,14 +233,33 @@ const Messages = () => {
             timestamp: new Date().toISOString(),
         };
         setMessages(prev => [...prev, optimisticMsg]);
+        const sentText = newMessage.trim();
         setNewMessage('');
+
+        // Send via WebSocket if connected.
+        // The updated backend now saves WebSocket messages to DB automatically.
+        // If disconnected, fallback to REST API.
+        if (connected) {
+            wsSend('/app/send', messagePayload);
+        } else {
+            try {
+                await fetch(`${API_BASE_URL}/chat/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(messagePayload),
+                });
+            } catch (err) {
+                console.error('REST send failed:', err);
+            }
+        }
+
         setSending(false);
 
         // Update conversations list
-        upsertConversation(activeChat.email, activeChat.name, newMessage.trim());
+        upsertConversation(activeChat.email, activeChat.name, sentText);
 
         // Re-fetch from DB after a short delay to sync with saved version
-        setTimeout(() => fetchMessages(activeChat.email), 1000);
+        setTimeout(() => fetchMessages(activeChat.email, true), 1000);
     };
 
     const handleKeyDown = (e) => {
@@ -184,6 +273,7 @@ const Messages = () => {
         setActiveChat({
             name: conv.partnerName || conv.partnerEmail || 'User',
             email: conv.partnerEmail,
+            foodTitle: conv.foodTitle || null,
         });
         setShowMobileChat(true);
     };
@@ -306,6 +396,12 @@ const Messages = () => {
                                                     {formatTime(conv.timestamp)}
                                                 </span>
                                             </div>
+                                            {conv.foodTitle && (
+                                                <p className="text-[11px] text-primary font-medium truncate mt-0.5 flex items-center gap-1">
+                                                    <Utensils size={10} className="shrink-0" />
+                                                    {conv.foodTitle}
+                                                </p>
+                                            )}
                                             <p className="text-xs text-text-light truncate mt-0.5">
                                                 {conv.lastMessage || 'Start a conversation'}
                                             </p>
@@ -339,6 +435,15 @@ const Messages = () => {
                                     )}
                                 </div>
                             </div>
+                            {/* Food context banner */}
+                            {activeChat.foodTitle && (
+                                <div className="px-4 py-2 bg-primary/5 border-b border-primary/15 flex items-center gap-2">
+                                    <Utensils size={14} className="text-primary shrink-0" />
+                                    <span className="text-xs font-medium text-primary truncate">
+                                        Regarding: {activeChat.foodTitle}
+                                    </span>
+                                </div>
+                            )}
 
                             {/* Messages Area */}
                             <div className="flex-grow overflow-y-auto px-4 py-4 space-y-1 bg-background/50">
@@ -389,12 +494,12 @@ const Messages = () => {
                                                     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1`}>
                                                         <div
                                                             className={`max-w-[75%] px-3.5 py-2 rounded-2xl text-sm leading-relaxed ${isOwn
-                                                                ? 'bg-primary text-white rounded-br-md'
+                                                                ? 'bg-surface border border-border text-text-main rounded-br-md shadow-sm'
                                                                 : 'bg-surface border border-border text-text-main rounded-bl-md'
                                                                 }`}
                                                         >
                                                             <p className="whitespace-pre-wrap break-words">{msg.content}</p>
-                                                            <p className={`text-[10px] mt-1 text-right ${isOwn ? 'text-white/60' : 'text-text-muted'}`}>
+                                                            <p className={`text-[10px] mt-1 text-right text-text-muted`}>
                                                                 {formatMessageTime(msg.timestamp || msg.createdAt)}
                                                             </p>
                                                         </div>
