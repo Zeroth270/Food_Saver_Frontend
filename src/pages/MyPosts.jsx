@@ -5,11 +5,13 @@ import Button from '../components/Button';
 import Input from '../components/Input';
 import API_BASE_URL from '../config';
 import { getUser } from '../utils/auth';
+import { useWebSocket } from '../context/WebSocketContext';
 
 const MyPosts = () => {
     const navigate = useNavigate();
     const user = getUser();
     const userId = user?.userId || user?.id;
+    const { sendMessage } = useWebSocket();
 
     const [posts, setPosts] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -129,6 +131,7 @@ const MyPosts = () => {
             const response = await fetch(`${API_BASE_URL}/contact/food/${foodId}`);
             if (!response.ok) throw new Error('Failed to fetch requests');
             const data = await response.json();
+            console.log('=== REQUESTS API RESPONSE ===', JSON.stringify(data, null, 2));
             setPostRequests(data);
         } catch (err) {
             console.error('Error fetching requests:', err);
@@ -138,7 +141,7 @@ const MyPosts = () => {
         }
     };
 
-    const handleUpdateRequestStatus = async (requestId, action) => {
+    const handleUpdateRequestStatus = async (requestId, action, receiverEmail, foodTitle) => {
         try {
             const response = await fetch(`${API_BASE_URL}/contact/${action}/${requestId}`, {
                 method: 'PUT'
@@ -148,6 +151,13 @@ const MyPosts = () => {
             // Refresh requests for this post
             const data = await response.json();
             setPostRequests(prev => prev.map(req => req.contactId === requestId ? data : req));
+
+            // Send WebSocket notification to the receiver
+            if (receiverEmail) {
+                const statusText = action === 'accept' ? 'accepted ✅' : 'declined ❌';
+                const notifMessage = `Your request for "${foodTitle || 'a food item'}" has been ${statusText} by ${user?.name || 'the donor'}.`;
+                sendMessage(`/app/notify/${receiverEmail}`, notifMessage);
+            }
         } catch (err) {
             alert(err.message);
         }
@@ -383,7 +393,7 @@ const MyPosts = () => {
                                                                             variant="primary"
                                                                             size="sm"
                                                                             className="!bg-green-600 hover:!bg-green-700 !border-green-600 !py-1"
-                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'accept')}
+                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'accept', req.receiver?.email, post.title)}
                                                                         >
                                                                             <Check size={14} className="mr-1" /> Accept
                                                                         </Button>
@@ -391,7 +401,7 @@ const MyPosts = () => {
                                                                             variant="outline"
                                                                             size="sm"
                                                                             className="!text-red-600 !border-red-200 hover:!bg-red-50 !py-1"
-                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'reject')}
+                                                                            onClick={() => handleUpdateRequestStatus(req.contactId, 'reject', req.receiver?.email, post.title)}
                                                                         >
                                                                             <XCircle size={14} className="mr-1" /> Reject
                                                                         </Button>

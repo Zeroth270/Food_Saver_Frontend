@@ -17,10 +17,14 @@ export const WebSocketProvider = ({ children }) => {
     useEffect(() => {
         if (!isLoggedIn()) return;
 
+        const user = getUser();
         const wsUrl = API_BASE_URL.replace(/^http/, 'http') + '/ws';
 
         const client = new Client({
             webSocketFactory: () => new SockJS(wsUrl),
+            connectHeaders: {
+                email: user?.email || '',
+            },
             reconnectDelay: 5000,
             heartbeatIncoming: 4000,
             heartbeatOutgoing: 4000,
@@ -89,11 +93,12 @@ export const WebSocketProvider = ({ children }) => {
         };
     }, []);
 
-    const sendMessage = useCallback((destination, body) => {
+    const sendMessage = useCallback((destination, body, headers = {}) => {
         if (clientRef.current?.connected) {
             clientRef.current.publish({
                 destination,
                 body: typeof body === 'string' ? body : JSON.stringify(body),
+                headers,
             });
         }
     }, []);

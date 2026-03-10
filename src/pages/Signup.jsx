@@ -12,7 +12,7 @@ const Signup = () => {
         email: '',
         phone: '',
         password: '',
-        role: 'USER'
+        role: 'Receiver'
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -258,10 +258,8 @@ const Signup = () => {
                             required
                             className="w-full px-4 py-2 rounded-lg border border-border bg-surface text-text-main focus:outline-none focus:ring-2 focus:ring-primary"
                         >
-                            <option value="USER">User</option>
                             <option value="DONOR">Donor</option>
                             <option value="RECEIVER">Receiver</option>
-                            <option value="ADMIN">Admin</option>
                         </select>
                     </div>
 

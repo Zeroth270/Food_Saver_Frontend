@@ -240,17 +240,19 @@ const Messages = () => {
         // The updated backend now saves WebSocket messages to DB automatically.
         // If disconnected, fallback to REST API.
         if (connected) {
-            wsSend('/app/send', messagePayload);
-        } else {
+            wsSend('/app/send', messagePayload, activeChat.foodId ? { foodPostId: activeChat.foodId } : {});
+        } else if (activeChat.foodId) {
             try {
-                await fetch(`${API_BASE_URL}/chat/send`, {
+                await fetch(`${API_BASE_URL}/chat/send/${activeChat.foodId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(messagePayload),
+                    body: JSON.stringify({ message: messagePayload.content }),
                 });
             } catch (err) {
                 console.error('REST send failed:', err);
             }
+        } else {
+            console.warn('No foodId available for REST fallback, message not sent to server');
         }
 
         setSending(false);

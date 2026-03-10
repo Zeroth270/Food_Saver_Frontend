@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getUser } from '../utils/auth';
 import { useNavigate } from 'react-router-dom';
 import {
     X, MapPin, Clock, Package, Utensils, Leaf, Drumstick,
     Navigation, User, Phone, Mail, MessageCircle, IndianRupee,
-    Calendar, Info, Send, CheckCircle2, AlertCircle, Loader2
+    Calendar, Info, Send, CheckCircle2, AlertCircle, Loader2,
+    XCircle, Hourglass
 } from 'lucide-react';
 import Button from './Button';
 import API_BASE_URL from '../config';
@@ -19,6 +20,50 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
     const [requestSuccess, setRequestSuccess] = useState(false);
     const [requestError, setRequestError] = useState('');
 
+    // Existing request status check
+    const [existingRequestStatus, setExistingRequestStatus] = useState(null); // null | 'PENDING' | 'ACCEPT' | 'REJECT'
+    const [statusCheckLoading, setStatusCheckLoading] = useState(false);
+
+    const currentUser = getUser();
+
+    // Check if this receiver already has a request for this food post
+    useEffect(() => {
+        if (!food?.foodId || !currentUser) return;
+
+        const receiverId = currentUser.userId || currentUser.id;
+        if (!receiverId) return;
+
+        const donor = food.user || {};
+        const donorEmail = donor.email || null;
+        // Don't check if the current user is the donor
+        if (currentUser.email && donorEmail && currentUser.email === donorEmail) return;
+
+        const checkExistingRequest = async () => {
+            setStatusCheckLoading(true);
+            try {
+                const response = await fetch(`${API_BASE_URL}/contact/food/${food.foodId}`);
+                if (response.ok) {
+                    const requests = await response.json();
+                    // Find if this receiver already sent a request
+                    const myRequest = requests.find(
+                        req => req.receiver?.userId === receiverId ||
+                            req.receiver?.id === receiverId ||
+                            req.receiver?.email === currentUser.email
+                    );
+                    if (myRequest) {
+                        setExistingRequestStatus(myRequest.status);
+                    }
+                }
+            } catch (err) {
+                console.error('Error checking existing request:', err);
+            } finally {
+                setStatusCheckLoading(false);
+            }
+        };
+
+        checkExistingRequest();
+    }, [food?.foodId]);
+
     if (!food) return null;
 
     const donor = food.user || {};
@@ -27,7 +72,6 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
     const donorPhone = donor.phone || donor.phoneNumber || null;
 
     // Check if the current logged-in user is the donor
-    const currentUser = getUser();
     const isDonor = currentUser?.email && donorEmail && currentUser.email === donorEmail;
 
     const typeColor = food.foodType === 'Veg'
@@ -50,6 +94,54 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
 
     const imageUrl = food.image || null;
 
+    // Helper to render the request status banner
+    const renderRequestStatusBanner = () => {
+        if (!existingRequestStatus) return null;
+
+        const bannerConfig = {
+            PENDING: {
+                icon: <Hourglass size={20} className="shrink-0" />,
+                title: 'Request Pending',
+                message: 'You have already requested this food. The donor will review your request soon.',
+                bgColor: 'bg-yellow-50',
+                borderColor: 'border-yellow-200',
+                textColor: 'text-yellow-700',
+                iconColor: 'text-yellow-500',
+            },
+            ACCEPT: {
+                icon: <CheckCircle2 size={20} className="shrink-0" />,
+                title: 'Request Accepted!',
+                message: 'The donor has accepted your request. You can now contact them to arrange pickup.',
+                bgColor: 'bg-green-50',
+                borderColor: 'border-green-200',
+                textColor: 'text-green-700',
+                iconColor: 'text-green-500',
+            },
+            REJECT: {
+                icon: <XCircle size={20} className="shrink-0" />,
+                title: 'Request Declined',
+                message: 'Unfortunately, the donor has declined your request for this food item.',
+                bgColor: 'bg-red-50',
+                borderColor: 'border-red-200',
+                textColor: 'text-red-700',
+                iconColor: 'text-red-500',
+            },
+        };
+
+        const config = bannerConfig[existingRequestStatus];
+        if (!config) return null;
+
+        return (
+            <div className={`flex items-start gap-3 p-4 rounded-xl border ${config.bgColor} ${config.borderColor} w-full`}>
+                <div className={config.iconColor}>{config.icon}</div>
+                <div>
+                    <p className={`font-semibold text-sm ${config.textColor}`}>{config.title}</p>
+                    <p className={`text-sm mt-0.5 ${config.textColor} opacity-80`}>{config.message}</p>
+                </div>
+            </div>
+        );
+    };
+
     const handleSendRequest = async () => {
         if (!currentUser) {
             navigate('/login');
@@ -70,23 +162,34 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
         setRequestLoading(true);
         setRequestError('');
 
+        const url = `${API_BASE_URL}/contact/send/${food.foodId}/${receiverId}`;
+        const payload = { message: requestMessage };
+        console.log('=== SENDING REQUEST ===');
+        console.log('URL:', url);
+        console.log('Payload:', payload);
+
         try {
-            const response = await fetch(`${API_BASE_URL}/contact/send/${food.foodId}/${receiverId}`, {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: requestMessage })
+                body: JSON.stringify(payload)
             });
 
+            console.log('=== RESPONSE STATUS ===', response.status);
+            const responseText = await response.text();
+            console.log('=== RESPONSE BODY ===', responseText);
+
             if (!response.ok) {
-                const errData = await response.text();
-                throw new Error(errData || 'Failed to send request');
+                throw new Error(responseText || 'Failed to send request');
             }
 
             setRequestSuccess(true);
+            setExistingRequestStatus('PENDING');
             setTimeout(() => {
                 onClose();
             }, 2000);
         } catch (err) {
+            console.error('=== REQUEST ERROR ===', err);
             setRequestError(err.message || 'An error occurred while sending the request.');
         } finally {
             setRequestLoading(false);
@@ -195,139 +298,194 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
 
                     {/* Donor / Contact Section */}
                     <div className="border-t border-border pt-5">
-                        <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Donor Information</h4>
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center text-primary font-bold text-lg shrink-0">
-                                {donorName.charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                                <p className="font-semibold text-text-main">{donorName}</p>
-                                {donorEmail && (
-                                    <p className="text-sm text-text-light">{donorEmail}</p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Contact Actions — only shown to receivers, not to the donor */}
-                        {isDonor ? (
-                            <div className="flex items-center gap-2 text-sm text-primary p-3 bg-primary/5 rounded-lg border border-primary/20 w-full">
-                                <Info size={16} />
-                                <span>This is your listing. Contact options are shown to receivers only.</span>
-                            </div>
-                        ) : showRequestForm ? (
-                            <div className="bg-background border border-border rounded-xl p-4 animate-in">
-                                {requestSuccess ? (
-                                    <div className="flex flex-col items-center justify-center py-4 text-green-600">
-                                        <CheckCircle2 size={48} className="mb-2" />
-                                        <p className="font-medium text-center">Request sent successfully!</p>
-                                        <p className="text-sm opacity-80 mt-1">The donor will review your request.</p>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <h4 className="font-semibold text-text-main mb-2 flex items-center gap-2">
-                                            <Utensils size={18} className="text-primary" />
-                                            Request this Food
-                                        </h4>
-                                        <p className="text-sm text-text-muted mb-4">
-                                            Send a request to the donor to claim this item. You can include an optional message here.
-                                        </p>
-                                        <textarea
-                                            value={requestMessage}
-                                            onChange={(e) => setRequestMessage(e.target.value)}
-                                            placeholder="E.g., I'd love to pick this up! When are you available?"
-                                            rows={3}
-                                            className="w-full resize-none rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all mb-3"
-                                        />
-
-                                        {requestError && (
-                                            <div className="flex items-start gap-2 text-sm text-red-500 mb-3 bg-red-50 p-2 rounded-lg border border-red-100">
-                                                <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                                                <span>{requestError}</span>
-                                            </div>
-                                        )}
-
-                                        <div className="flex gap-2">
-                                            <Button
-                                                variant="primary"
-                                                className="flex-1"
-                                                onClick={handleSendRequest}
-                                                disabled={requestLoading}
-                                            >
-                                                {requestLoading ? (
-                                                    <><Loader2 size={16} className="animate-spin mr-2" /> Sending...</>
-                                                ) : (
-                                                    <><Send size={16} className="mr-2" /> Send Request</>
-                                                )}
-                                            </Button>
-                                            <Button
-                                                variant="outline"
-                                                onClick={() => {
-                                                    setShowRequestForm(false);
-                                                    setRequestError('');
-                                                }}
-                                                disabled={requestLoading}
-                                            >
-                                                Cancel
-                                            </Button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        ) : (
-                            <div className="flex flex-wrap gap-3">
-                                {/* Formal Request Button */}
+                        {!currentUser ? (
+                            <div className="flex flex-col items-center gap-3 p-5 bg-background rounded-xl border border-border w-full text-center">
+                                <Info size={22} className="text-primary" />
+                                <p className="text-sm text-text-main font-medium">Login to contact Donor</p>
+                                <p className="text-xs text-text-muted">You need to be logged in to view donor details and send requests.</p>
                                 <Button
                                     variant="primary"
+                                    size="sm"
                                     onClick={() => {
-                                        if (!currentUser) navigate('/login');
-                                        else setShowRequestForm(true);
+                                        onClose();
+                                        navigate('/login');
                                     }}
-                                    className="!w-full sm:!w-auto"
                                 >
-                                    <Utensils size={16} className="mr-2" />
-                                    Request Food
+                                    Log In
                                 </Button>
+                            </div>
+                        ) : (
+                            <>
+                                <h4 className="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Donor Information</h4>
+                                <div className="flex items-center gap-4 mb-4">
+                                    <div className="w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center text-primary font-bold text-lg shrink-0">
+                                        {donorName.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                        <p className="font-semibold text-text-main">{donorName}</p>
+                                        {donorEmail && (
+                                            <p className="text-sm text-text-light">{donorEmail}</p>
+                                        )}
+                                    </div>
+                                </div>
 
-                                {/* In-App Message */}
-                                {donorEmail && (
-                                    <button
-                                        onClick={() => {
-                                            onClose();
-                                            navigate(`/messages?name=${encodeURIComponent(donorName)}&email=${encodeURIComponent(donorEmail)}&foodTitle=${encodeURIComponent(food.title || '')}&foodId=${encodeURIComponent(food.foodId || '')}`);
-                                        }}
-                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors cursor-pointer w-full sm:w-auto"
-                                    >
-                                        <MessageCircle size={16} />
-                                        Chat
-                                    </button>
-                                )}
-                                {donorPhone && (
-                                    <a
-                                        href={`tel:${donorPhone}`}
-                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline w-full sm:w-auto"
-                                    >
-                                        <Phone size={16} />
-                                        Call
-                                    </a>
-                                )}
-                                {donorPhone && (
-                                    <a
-                                        href={`https://wa.me/${donorPhone.replace(/[^0-9]/g, '')}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors no-underline w-full sm:w-auto"
-                                    >
-                                        <MessageCircle size={16} />
-                                        WhatsApp
-                                    </a>
-                                )}
-                                {!donor.userId && !donorPhone && !donorEmail && (
-                                    <div className="flex items-center gap-2 text-sm text-text-muted p-3 bg-background rounded-lg border border-border w-full">
+                                {/* Contact Actions */}
+                                {isDonor ? (
+                                    <div className="flex items-center gap-2 text-sm text-primary p-3 bg-primary/5 rounded-lg border border-primary/20 w-full">
                                         <Info size={16} />
-                                        <span>Contact information is not available for this donor.</span>
+                                        <span>This is your listing. Contact options are shown to receivers only.</span>
+                                    </div>
+                                ) : statusCheckLoading ? (
+                                    <div className="flex items-center justify-center py-4">
+                                        <Loader2 size={20} className="animate-spin text-primary mr-2" />
+                                        <span className="text-sm text-text-muted">Checking request status...</span>
+                                    </div>
+                                ) : existingRequestStatus ? (
+                                    <div className="space-y-3">
+                                        {renderRequestStatusBanner()}
+                                        {/* Show contact options for accepted requests */}
+                                        {existingRequestStatus === 'ACCEPT' && (
+                                            <div className="flex flex-wrap gap-3 pt-1">
+                                                {donorEmail && (
+                                                    <button
+                                                        onClick={() => {
+                                                            onClose();
+                                                            navigate(`/messages?name=${encodeURIComponent(donorName)}&email=${encodeURIComponent(donorEmail)}&foodTitle=${encodeURIComponent(food.title || '')}&foodId=${encodeURIComponent(food.foodId || '')}`);
+                                                        }}
+                                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors cursor-pointer w-full sm:w-auto"
+                                                    >
+                                                        <MessageCircle size={16} />
+                                                        Chat with Donor
+                                                    </button>
+                                                )}
+                                                {donorPhone && (
+                                                    <a
+                                                        href={`tel:${donorPhone}`}
+                                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline w-full sm:w-auto"
+                                                    >
+                                                        <Phone size={16} />
+                                                        Call
+                                                    </a>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : showRequestForm ? (
+                                    <div className="bg-background border border-border rounded-xl p-4 animate-in">
+                                        {requestSuccess ? (
+                                            <div className="flex flex-col items-center justify-center py-4 text-green-600">
+                                                <CheckCircle2 size={48} className="mb-2" />
+                                                <p className="font-medium text-center">Request sent successfully!</p>
+                                                <p className="text-sm opacity-80 mt-1">The donor will review your request.</p>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <h4 className="font-semibold text-text-main mb-2 flex items-center gap-2">
+                                                    <Utensils size={18} className="text-primary" />
+                                                    Request this Food
+                                                </h4>
+                                                <p className="text-sm text-text-muted mb-4">
+                                                    Send a request to the donor to claim this item. You can include an optional message here.
+                                                </p>
+                                                <textarea
+                                                    value={requestMessage}
+                                                    onChange={(e) => setRequestMessage(e.target.value)}
+                                                    placeholder="E.g., I'd love to pick this up! When are you available?"
+                                                    rows={3}
+                                                    className="w-full resize-none rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all mb-3"
+                                                />
+
+                                                {requestError && (
+                                                    <div className="flex items-start gap-2 text-sm text-red-500 mb-3 bg-red-50 p-2 rounded-lg border border-red-100">
+                                                        <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                                        <span>{requestError}</span>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        variant="primary"
+                                                        className="flex-1"
+                                                        onClick={handleSendRequest}
+                                                        disabled={requestLoading}
+                                                    >
+                                                        {requestLoading ? (
+                                                            <><Loader2 size={16} className="animate-spin mr-2" /> Sending...</>
+                                                        ) : (
+                                                            <><Send size={16} className="mr-2" /> Send Request</>
+                                                        )}
+                                                    </Button>
+                                                    <Button
+                                                        variant="outline"
+                                                        onClick={() => {
+                                                            setShowRequestForm(false);
+                                                            setRequestError('');
+                                                        }}
+                                                        disabled={requestLoading}
+                                                    >
+                                                        Cancel
+                                                    </Button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap gap-3">
+                                        {/* Formal Request Button */}
+                                        <Button
+                                            variant="primary"
+                                            onClick={() => {
+                                                if (!currentUser) navigate('/login');
+                                                else setShowRequestForm(true);
+                                            }}
+                                            className="!w-full sm:!w-auto"
+                                        >
+                                            <Utensils size={16} className="mr-2" />
+                                            Request Food
+                                        </Button>
+
+                                        {/* In-App Message */}
+                                        {donorEmail && (
+                                            <button
+                                                onClick={() => {
+                                                    onClose();
+                                                    navigate(`/messages?name=${encodeURIComponent(donorName)}&email=${encodeURIComponent(donorEmail)}&foodTitle=${encodeURIComponent(food.title || '')}&foodId=${encodeURIComponent(food.foodId || '')}`);
+                                                }}
+                                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors cursor-pointer w-full sm:w-auto"
+                                            >
+                                                <MessageCircle size={16} />
+                                                Chat
+                                            </button>
+                                        )}
+                                        {donorPhone && (
+                                            <a
+                                                href={`tel:${donorPhone}`}
+                                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-border bg-background text-text-main text-sm font-medium hover:border-primary/50 transition-colors no-underline w-full sm:w-auto"
+                                            >
+                                                <Phone size={16} />
+                                                Call
+                                            </a>
+                                        )}
+                                        {donorPhone && (
+                                            <a
+                                                href={`https://wa.me/${donorPhone.replace(/[^0-9]/g, '')}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors no-underline w-full sm:w-auto"
+                                            >
+                                                <MessageCircle size={16} />
+                                                WhatsApp
+                                            </a>
+                                        )}
+                                        {!donor.userId && !donorPhone && !donorEmail && (
+                                            <div className="flex items-center gap-2 text-sm text-text-muted p-3 bg-background rounded-lg border border-border w-full">
+                                                <Info size={16} />
+                                                <span>Contact information is not available for this donor.</span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
-                            </div>
+                            </>
                         )}
                     </div>
                 </div>
@@ -347,3 +505,4 @@ const FoodDetailModal = ({ food, formatDate, distance, onClose }) => {
 };
 
 export default FoodDetailModal;
+
