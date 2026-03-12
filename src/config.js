@@ -1,5 +1,5 @@
-const API_BASE_URL = 'http://localhost:8080';
-//const API_BASE_URL = 'https://foodsaver-production-dd44.up.railway.app';
+//const API_BASE_URL = 'http://localhost:8080';
+const API_BASE_URL = 'https://foodsaver-production-dd44.up.railway.app';
 
 
 export default API_BASE_URL;
