@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     MessageCircle, Send, ArrowLeft, Search, User, Wifi,
-    WifiOff, Loader2, AlertCircle, Clock, Utensils
+    WifiOff, Loader2, AlertCircle, Clock, Utensils, Trash2, MoreVertical
 } from 'lucide-react';
 import { useWebSocket } from '../context/WebSocketContext';
 import { getUser, isLoggedIn } from '../utils/auth';
@@ -26,6 +26,7 @@ const Messages = () => {
     const [error, setError] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [showMobileChat, setShowMobileChat] = useState(false);
+    const [menuOpenId, setMenuOpenId] = useState(null);
 
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
@@ -39,6 +40,17 @@ const Messages = () => {
         scrollToBottom();
     }, [messages, scrollToBottom]);
 
+    // Close conversation menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (!e.target.closest('.conv-menu-container')) {
+                setMenuOpenId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     // Fetch conversations from backend
     const fetchConversations = useCallback(async () => {
         if (!user?.email) return;
@@ -50,11 +62,13 @@ const Messages = () => {
                 // The backend now returns List<ConversationDTO> instead of raw chats.
                 // Expected fields: partnerEmail, partnerName, lastMessage, lastTimestamp, foodTitle
                 const formattedConvs = data.map(conv => ({
+                    id: conv.id || conv.conversationId || conv.convId, // defensively map ID
                     partnerEmail: conv.partnerEmail,
                     partnerName: conv.partnerName || conv.partnerEmail || 'Unknown User',
                     lastMessage: conv.lastMessage || '',
                     timestamp: conv.lastTimestamp || conv.timestamp || new Date().toISOString(),
                     foodTitle: conv.foodTitle || null,
+                    foodPostId: conv.foodPostId || null,
                 })).filter(c => c.partnerEmail); // Filter out any completely null DTOs just in case
 
                 // Sort by newest first
@@ -86,17 +100,26 @@ const Messages = () => {
         setConversations(prev => {
             const existingConv = prev.find(c => c.partnerEmail === partnerEmail);
             const others = prev.filter(c => c.partnerEmail !== partnerEmail);
+
+            // If we have an existing conversation with a real name (not an email), and the new partnerName is an email, keep the existing name
+            const finalPartnerName = (existingConv && existingConv.partnerName && existingConv.partnerName !== existingConv.partnerEmail && partnerName === partnerEmail)
+                ? existingConv.partnerName
+                : (partnerName || existingConv?.partnerName || 'User');
+
             const updated = [
                 {
                     partnerEmail,
-                    partnerName,
-                    lastMessage,
+                    partnerName: finalPartnerName,
+                    lastMessage: lastMessage || existingConv?.lastMessage || '',
                     timestamp: new Date().toISOString(),
-                    // Keep existing foodTitle if not provided in this call
+                    // Keep existing foodTitle/foodPostId if not provided in this call
                     foodTitle: foodTitle || existingConv?.foodTitle || null,
+                    foodPostId: existingConv?.foodPostId || null,
                 },
                 ...others,
             ];
+            // Sort by newest first
+            updated.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             localStorage.setItem('chat_conversations', JSON.stringify(updated));
             return updated;
         });
@@ -141,9 +164,39 @@ const Messages = () => {
             if (response.ok) {
                 const data = await response.json();
                 const sorted = (Array.isArray(data) ? data : []).sort(
-                    (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+                    (a, b) => new Date(a.timestamp || a.createdAt) - new Date(b.timestamp || b.createdAt)
                 );
-                setMessages(sorted);
+
+                // If this is a silent fetch (polling), we need to carefully merge so we don't
+                // overwrite optimistic messages that haven't been saved to the DB yet.
+                // We assume optimistic messages have an `id` that is very large (Date.now()) or don't exist in DB.
+                // Actually, the simplest approach for now is to just replace, but if we just sent an optimistic msg,
+                // the DB might be slightly behind.
+                setMessages(prev => {
+                    if (!silent) return sorted;
+
+                    // Find optimistic messages (sent by us in the last 2 seconds) that might not be in the sorted DB list yet
+                    const recentOptimistic = prev.filter(p => {
+                        if (p.id > 1000000000000) return true; // It's an optimistic timestamp ID
+                        return false;
+                    });
+
+                    if (recentOptimistic.length > 0) {
+                        // Create a map of DB message contents to avoid duplicates
+                        const dbContents = new Set(sorted.map(m => m.content.trim()));
+                        const missingOptimistic = recentOptimistic.filter(m => !dbContents.has(m.content.trim()));
+
+                        // If the DB caught up and has our message, return just DB.
+                        // If the DB missed it, return DB + the missing optimistic message.
+                        if (missingOptimistic.length > 0) {
+                            return [...sorted, ...missingOptimistic].sort(
+                                (a, b) => new Date(a.timestamp || a.createdAt) - new Date(b.timestamp || b.createdAt)
+                            );
+                        }
+                    }
+
+                    return sorted;
+                });
             } else if (!silent) {
                 setMessages([]);
             }
@@ -229,36 +282,46 @@ const Messages = () => {
         // Optimistically add to local messages
         const optimisticMsg = {
             ...messagePayload,
-            id: Date.now(),
+            id: Date.now(), // High ID to identify as optimistic
             timestamp: new Date().toISOString(),
         };
         setMessages(prev => [...prev, optimisticMsg]);
         const sentText = newMessage.trim();
         setNewMessage('');
 
+        // Update conversations list immediately
+        upsertConversation(activeChat.email, activeChat.name, sentText);
+
         // Send via WebSocket if connected.
         // The updated backend now saves WebSocket messages to DB automatically.
         // If disconnected, fallback to REST API.
         if (connected) {
-            wsSend('/app/send', messagePayload, activeChat.foodId ? { foodPostId: activeChat.foodId } : {});
+            wsSend('/app/send', messagePayload, activeChat.foodId ? { foodPostId: activeChat.foodId.toString() } : {});
         } else if (activeChat.foodId) {
             try {
                 await fetch(`${API_BASE_URL}/chat/send/${activeChat.foodId}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: messagePayload.content }),
+                    body: JSON.stringify(messagePayload), // Make sure all expected backend fields are sent
                 });
             } catch (err) {
                 console.error('REST send failed:', err);
             }
         } else {
-            console.warn('No foodId available for REST fallback, message not sent to server');
+            console.warn('No foodId available for REST fallback, sending via generic fallback...');
+            // Backup generic REST send if foodPostId is not strict
+            try {
+                await fetch(`${API_BASE_URL}/chat/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(messagePayload),
+                });
+            } catch (err) {
+                console.error('Generic REST send failed:', err);
+            }
         }
 
         setSending(false);
-
-        // Update conversations list
-        upsertConversation(activeChat.email, activeChat.name, sentText);
 
         // Re-fetch from DB after a short delay to sync with saved version
         setTimeout(() => fetchMessages(activeChat.email, true), 1000);
@@ -276,8 +339,54 @@ const Messages = () => {
             name: conv.partnerName || conv.partnerEmail || 'User',
             email: conv.partnerEmail,
             foodTitle: conv.foodTitle || null,
+            foodId: conv.foodPostId || null,
         });
         setShowMobileChat(true);
+    };
+
+    const handleDeleteConversation = async (convEmailOrId, e) => {
+        if (e) {
+            e.stopPropagation(); // prevent opening the chat if clicking delete on list
+        }
+
+        // We try to find the actual `id` from the conversation if we only have the email
+        const targetConv = conversations.find(c => c.partnerEmail === convEmailOrId || c.id === convEmailOrId);
+        const convId = targetConv?.id || convEmailOrId; // fallback if it's already the ID
+
+        if (!convId || isNaN(convId)) {
+            alert('Cannot delete conversation: Server ID is missing. Try sending a message first or refresh.');
+            return;
+        }
+
+        if (!window.confirm('Are you sure you want to delete this conversation? This action cannot be undone for you.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/chat/delete/${convId}`, {
+                method: 'DELETE',
+            });
+
+            if (response.ok || response.status === 200 || response.status === 204) {
+                // Completely remove from local state using partnerEmail or id
+                setConversations(prev => {
+                    const updated = prev.filter(c => c.partnerEmail !== convEmailOrId && c.id !== convEmailOrId);
+                    localStorage.setItem('chat_conversations', JSON.stringify(updated));
+                    return updated;
+                });
+                // If it was the active chat, clear it
+                if (activeChat?.email === convEmailOrId || activeChat?.id === convEmailOrId) {
+                    setActiveChat(null);
+                    setMessages([]);
+                    setShowMobileChat(false);
+                }
+            } else {
+                throw new Error('Failed to delete');
+            }
+        } catch (err) {
+            console.error('Error deleting conversation:', err);
+            alert('An error occurred while deleting the conversation.');
+        }
     };
 
     const formatTime = (timestamp) => {
@@ -408,6 +517,36 @@ const Messages = () => {
                                                 {conv.lastMessage || 'Start a conversation'}
                                             </p>
                                         </div>
+                                        {/* Three dot menu option */}
+                                        {conv.id && (
+                                            <div className="relative conv-menu-container self-start shrink-0">
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setMenuOpenId(menuOpenId === conv.id ? null : conv.id);
+                                                    }}
+                                                    className="p-1 focus:outline-none text-text-muted hover:text-text-main hover:bg-border/50 rounded-md transition-all"
+                                                    title="More Options"
+                                                >
+                                                    <MoreVertical size={18} />
+                                                </button>
+                                                
+                                                {menuOpenId === conv.id && (
+                                                    <div className="absolute right-0 top-full mt-1 w-32 bg-surface border border-border rounded-lg shadow-lg z-10 py-1 overflow-hidden">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                setMenuOpenId(null);
+                                                                handleDeleteConversation(conv.id, e);
+                                                            }}
+                                                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 transition-colors text-left"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })
